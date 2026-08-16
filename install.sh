@@ -1,21 +1,24 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
 
-APP_DIR="/opt/nexus"
-PORT=8000
+APP_DIR = "/opt/nexus"
+PORT = 8000
 
-mkdir -p "${APP_DIR}/src" "${APP_DIR}/clients/web" "${APP_DIR}/data"
+def write(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
 
-cat > "${APP_DIR}/requirements.txt" <<'EOF'
-fastapi==0.115.0
+write(f"{APP_DIR}/requirements.txt", """fastapi==0.115.0
 uvicorn[standard]==0.30.0
 pydantic==2.9.0
 httpx==0.28.1
 websockets==13.1
-EOF
+""")
 
-cat > "${APP_DIR}/src/models.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/models.py", """from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
 
@@ -40,10 +43,9 @@ class Goal(BaseModel):
     deadline: str | None = None
     created_at: str | None = None
     status: str = TaskStatus.pending
-EOF
+""")
 
-cat > "${APP_DIR}/src/world_model.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/world_model.py", """from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
 
@@ -62,10 +64,9 @@ class WorldStore:
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [d.model_dump() for d in self.devices.values()]
-EOF
+""")
 
-cat > "${APP_DIR}/src/sync.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/sync.py", """from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -90,10 +91,9 @@ class SyncState:
 
     def pending_for(self, device_id: str) -> list[dict[str, Any]]:
         return [op.__dict__ for op in self.ops]
-EOF
+""")
 
-cat > "${APP_DIR}/src/llm_backend.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/llm_backend.py", """from __future__ import annotations
 import os
 import httpx
 
@@ -127,11 +127,10 @@ class LLMBackend:
                 data = r.json()
                 return data["choices"][0]["message"]["content"]
         except Exception as exc:
-        return f"LLM-Fehler: {exc}"
-EOF
+            return f"LLM-Fehler: {exc}"
+""")
 
-cat > "${APP_DIR}/src/planner.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/planner.py", """from __future__ import annotations
 import uuid
 from models import Goal, Subtask, TaskStatus
 
@@ -151,10 +150,9 @@ class GoalPlanner:
             Subtask(id=uuid.uuid4().hex[:8], goal_id=goal.id, title="Plan ausfuehren", depends_on=[subs[0].id]),
         ]
         return goal, subs
-EOF
+""")
 
-cat > "${APP_DIR}/src/agent_core.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/agent_core.py", """from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 from pydantic import BaseModel
 
@@ -188,17 +186,16 @@ class ProactiveAgent:
             return None
         for sub in self.subtasks.values():
             if sub.get("goal_id") == gid and sub.get("status") == "pending":
-            deps = sub.get("depends_on", [])
+                deps = sub.get("depends_on", [])
                 if all(self.subtasks.get(dep, {}).get("status") == "done" for dep in deps):
-                    sub["status"] = "done"
+                sub["status"] = "done"
                     sub["result"] = f"Subtask \"{sub['title']}\" ausgefuehrt."
                     return f"Subtask \"{sub['title']}\" abgeschlossen."
         goal["status"] = "done"
         return f"Goal \"{goal.get('title', 'Goal')}\" abgeschlossen."
-EOF
+""")
 
-cat > "${APP_DIR}/src/cron.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/cron.py", """from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -225,10 +222,9 @@ class Scheduler:
                 if asyncio.iscoroutine(result):
                     await result
             await asyncio.sleep(min(j.interval_seconds for j in self.jobs))
-EOF
+""")
 
-cat > "${APP_DIR}/src/persistence.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/src/persistence.py", """from __future__ import annotations
 import json
 from pathlib import Path
 
@@ -250,9 +246,9 @@ class Persistence:
         tmp = self.base / f"{name}.tmp"
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.base / f"{name}.json")
-EOF
-cat > "${APP_DIR}/src/web_client.py" <<'EOF'
-from pathlib import Path
+""")
+
+write(f"{APP_DIR}/src/web_client.py", """from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -265,10 +261,9 @@ def mount_client(app: FastAPI) -> None:
         @app.get("/")
         def root() -> FileResponse:
             return FileResponse(str(CLIENT_DIR / "index.html"))
-EOF
+""")
 
-cat > "${APP_DIR}/agent_server.py" <<'EOF'
-from __future__ import annotations
+write(f"{APP_DIR}/agent_server.py", """from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Any
@@ -322,13 +317,13 @@ def _load(name: str) -> dict:
     return persistence.load(name)
 
 def _save(name: str, data: dict) -> None:
-persistence.save(name, data)
+    persistence.save(name, data)
 
 def _persist_goals() -> None:
     _save("goals", {"goals": agent.goals, "subtasks": agent.subtasks})
 
 def _persist_devices() -> None:
-    _save("devices", {k: v.model_dump() for k, v in world.devices.items()})
+_save("devices", {k: v.model_dump() for k, v in world.devices.items()})
 
 scheduler.add(CronJob(name="goal_tick", interval_seconds=60, task=agent.tick))
 
@@ -377,7 +372,7 @@ async def chat_http(payload: ChatIn) -> dict:
             agent.subtasks[sub.id] = sub.model_dump()
         agent.state.last_goal_id = goal.id
         _persist_goals()
-        agent.ingest_user_message(user_message)
+    agent.ingest_user_message(user_message)
     agent_tick = agent.tick()
     _persist_goals()
     sync_state.enqueue(SyncOp(op_id=uuid.uuid4().hex, op_type="chat", entity="conversation", key=datetime.utcnow().isoformat(), value={"message": user_message, "reply": agent_reply}, source_device=payload.device_id or "unknown"))
@@ -417,17 +412,16 @@ async def chat_ws(ws: WebSocket) -> None:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("agent_server:app", host="0.0.0.0", port=8000, reload=False)
-EOF
+""")
 
-cat > "${APP_DIR}/clients/web/index.html" <<'EOF'
-<!DOCTYPE html>
+write(f"{APP_DIR}/clients/web/index.html", """<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nexus</title>
 <style>
-body { font-family: system-ui, sans-serif; background:#0f1115; color:#e6e8eb; margin:0; }
+  body { font-family: system-ui, sans-serif; background:#0f1115; color:#e6e8eb; margin:0; }
   #wrap { max-width: 860px; margin: 0 auto; padding: 24px; }
   #log { border: 1px solid #23272f; border-radius: 12px; padding: 16px; min-height: 260px; }
   .row { margin: 10px 0; padding: 8px 10px; border-radius: 10px; }
@@ -464,12 +458,13 @@ const log = document.getElementById("log");
 const devices = document.getElementById("devices");
 const goals = document.getElementById("goals");
 const sync = document.getElementById("sync");
+
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function add(role, text, meta){
   const row = document.createElement("div");
   row.className = "row " + role;
-  row.innerHTML = `<div>${esc(text)}</div><div class="meta">${esc(meta||"")}</div>`;
+row.innerHTML = `<div>${esc(text)}</div><div class="meta">${esc(meta||"")}</div>`;
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
 }
@@ -511,7 +506,7 @@ async function send(){
     if(data.agent_tick) add("agent", "Tick: " + data.agent_tick);
     await refresh();
   } catch(e){
-  add("agent", "Fehler: " + e.message);
+    add("agent", "Fehler: " + e.message);
   }
 }
 
@@ -519,7 +514,7 @@ document.getElementById("send").addEventListener("click", send);
 document.getElementById("msg").addEventListener("keydown", e => { if(e.key==="Enter") send(); });
 
 (async ()=>{
-  await post("/device", { device_id: DEVICE, name: "Web-Client", type: "web", capabilities: ["browser"] });
+await post("/device", { device_id: DEVICE, name: "Web-Client", type: "web", capabilities: ["browser"] });
   add("agent", "Willkommen bei Nexus. Ich bin dein proaktiver Agent.", new Date().toLocaleTimeString());
   await refresh();
   setInterval(refresh, 5000);
@@ -527,33 +522,44 @@ document.getElementById("msg").addEventListener("keydown", e => { if(e.key==="En
 </script>
 </body>
 </html>
-EOF
+""")
 
-python3 -m venv "${APP_DIR}/.venv"
-"${APP_DIR}/.venv/bin/pip" install --quiet --upgrade pip
-"${APP_DIR}/.venv/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
+print("✅ Dateien erstellt")
+print(f"📁 App-Verzeichnis: {APP_DIR}")
+print(f"🌐 Port: {PORT}")
 
-cat > /etc/systemd/system/nexus.service <<EOF
-[Unit]
+print("\n🐍 Erstelle Virtual Environment...")
+os.makedirs(f"{APP_DIR}/.venv", exist_ok=True)
+subprocess.run([sys.executable, "-m", "venv", f"{APP_DIR}/.venv"], check=True)
+
+print("📥 Installiere Dependencies...")
+subprocess.run([f"{APP_DIR}/.venv/bin/pip", "install", "--quiet", "--upgrade", "pip"], check=True)
+subprocess.run([f"{APP_DIR}/.venv/bin/pip", "install", "--quiet", "-r", f"{APP_DIR}/requirements.txt"], check=True)
+
+print("⚙️  Erstelle systemd-Service...")
+service_content = f"""[Unit]
 Description=Nexus Goal Agent
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${APP_DIR}
-Environment="PATH=${APP_DIR}/.venv/bin"
+WorkingDirectory={APP_DIR}
+Environment="PATH={APP_DIR}/.venv/bin"
 Environment="LLM_MODEL=gpt-4o-mini"
-ExecStart=${APP_DIR}/.venv/bin/uvicorn agent_server:app --host 0.0.0.0 --port ${PORT}
+ExecStart={APP_DIR}/.venv/bin/uvicorn agent_server:app --host 0.0.0.0 --port {PORT}
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+"""
+with open("/etc/systemd/system/nexus.service", "w", encoding="utf-8", newline="\n") as f:
+    f.write(service_content)
 
-systemctl daemon-reload
-systemctl enable --now nexus
+print("🔄 Lade systemd neu und starte Nexus...")
+subprocess.run(["systemctl", "daemon-reload"], check=True)
+subprocess.run(["systemctl", "enable", "--now", "nexus"], check=True)
 
-echo
-echo "✅ Nexus deployed"
-echo "Web-Client: http://$(hostname -I | awk '{print $1}'):${PORT}/"
+print(f"\n✅ Nexus deployed!")
+print(f"🌐 Web-Client: http://$(hostname -I | awk '{{print $1}}'):{PORT}/")
+print(f"💡 Health-Check: http://localhost:{PORT}/health")
