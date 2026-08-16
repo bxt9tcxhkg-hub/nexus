@@ -1,17 +1,20 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-echo "🚀 Nexus Docker Deployment"
-echo "=========================="
+#!/bin/sh
+set -eu
 
 APP_DIR="/opt/nexus"
 PORT=8000
 
-# Verzeichnisse erstellen
 mkdir -p "${APP_DIR}/src" "${APP_DIR}/clients/web" "${APP_DIR}/data"
 
-# Python-Dateien schreiben
-cat > "${APP_DIR}/src/models.py" <<'PYEOF'
+cat > "${APP_DIR}/requirements.txt" <<'EOF'
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.9.0
+httpx==0.28.1
+websockets==13.1
+EOF
+
+cat > "${APP_DIR}/src/models.py" <<'EOF'
 from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
@@ -37,9 +40,9 @@ class Goal(BaseModel):
     deadline: str | None = None
     created_at: str | None = None
     status: str = TaskStatus.pending
-PYEOF
+EOF
 
-cat > "${APP_DIR}/src/world_model.py" <<'PYEOF'
+cat > "${APP_DIR}/src/world_model.py" <<'EOF'
 from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
@@ -59,9 +62,9 @@ class WorldStore:
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [d.model_dump() for d in self.devices.values()]
-PYEOF
+EOF
 
-cat > "${APP_DIR}/src/sync.py" <<'PYEOF'
+cat > "${APP_DIR}/src/sync.py" <<'EOF'
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -81,14 +84,15 @@ class SyncState:
     def __init__(self) -> None:
         self.devices: dict[str, dict[str, Any]] = {}
         self.ops: list[SyncOp] = []
-def enqueue(self, op: SyncOp) -> None:
+
+    def enqueue(self, op: SyncOp) -> None:
         self.ops.append(op)
 
     def pending_for(self, device_id: str) -> list[dict[str, Any]]:
         return [op.__dict__ for op in self.ops]
-PYEOF
+EOF
 
-cat > "${APP_DIR}/src/llm_backend.py" <<'PYEOF'
+cat > "${APP_DIR}/src/llm_backend.py" <<'EOF'
 from __future__ import annotations
 import os
 import httpx
@@ -123,10 +127,10 @@ class LLMBackend:
                 data = r.json()
                 return data["choices"][0]["message"]["content"]
         except Exception as exc:
-            return f"LLM-Fehler: {exc}"
-PYEOF
+        return f"LLM-Fehler: {exc}"
+EOF
 
-cat > "${APP_DIR}/src/planner.py" <<'PYEOF'
+cat > "${APP_DIR}/src/planner.py" <<'EOF'
 from __future__ import annotations
 import uuid
 from models import Goal, Subtask, TaskStatus
@@ -138,7 +142,7 @@ class GoalPlanner:
     async def plan_goal(self, text: str) -> tuple[Goal, list[Subtask]]:
         goal = Goal(
             id=uuid.uuid4().hex[:8],
-title="User Goal",
+            title="User Goal",
             description=text,
             success_criteria=[text],
         )
@@ -147,9 +151,9 @@ title="User Goal",
             Subtask(id=uuid.uuid4().hex[:8], goal_id=goal.id, title="Plan ausfuehren", depends_on=[subs[0].id]),
         ]
         return goal, subs
-PYEOF
+EOF
 
-cat > "${APP_DIR}/src/agent_core.py" <<'PYEOF'
+cat > "${APP_DIR}/src/agent_core.py" <<'EOF'
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 from pydantic import BaseModel
@@ -184,16 +188,16 @@ class ProactiveAgent:
             return None
         for sub in self.subtasks.values():
             if sub.get("goal_id") == gid and sub.get("status") == "pending":
-                deps = sub.get("depends_on", [])
+            deps = sub.get("depends_on", [])
                 if all(self.subtasks.get(dep, {}).get("status") == "done" for dep in deps):
                     sub["status"] = "done"
                     sub["result"] = f"Subtask \"{sub['title']}\" ausgefuehrt."
                     return f"Subtask \"{sub['title']}\" abgeschlossen."
         goal["status"] = "done"
-return f"Goal \"{goal.get('title', 'Goal')}\" abgeschlossen."
-PYEOF
+        return f"Goal \"{goal.get('title', 'Goal')}\" abgeschlossen."
+EOF
 
-cat > "${APP_DIR}/src/cron.py" <<'PYEOF'
+cat > "${APP_DIR}/src/cron.py" <<'EOF'
 from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
@@ -221,9 +225,9 @@ class Scheduler:
                 if asyncio.iscoroutine(result):
                     await result
             await asyncio.sleep(min(j.interval_seconds for j in self.jobs))
-PYEOF
+EOF
 
-cat > "${APP_DIR}/src/persistence.py" <<'PYEOF'
+cat > "${APP_DIR}/src/persistence.py" <<'EOF'
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -246,9 +250,8 @@ class Persistence:
         tmp = self.base / f"{name}.tmp"
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.base / f"{name}.json")
-PYEOF
-
-cat > "${APP_DIR}/src/web_client.py" <<'PYEOF'
+EOF
+cat > "${APP_DIR}/src/web_client.py" <<'EOF'
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -258,13 +261,13 @@ CLIENT_DIR = Path("/opt/nexus/clients/web")
 
 def mount_client(app: FastAPI) -> None:
     if CLIENT_DIR.exists():
-app.mount("/client", StaticFiles(directory=str(CLIENT_DIR), html=True), name="client")
+        app.mount("/client", StaticFiles(directory=str(CLIENT_DIR), html=True), name="client")
         @app.get("/")
         def root() -> FileResponse:
             return FileResponse(str(CLIENT_DIR / "index.html"))
-PYEOF
+EOF
 
-cat > "${APP_DIR}/agent_server.py" <<'PYEOF'
+cat > "${APP_DIR}/agent_server.py" <<'EOF'
 from __future__ import annotations
 import uuid
 from datetime import datetime
@@ -319,7 +322,7 @@ def _load(name: str) -> dict:
     return persistence.load(name)
 
 def _save(name: str, data: dict) -> None:
-    persistence.save(name, data)
+persistence.save(name, data)
 
 def _persist_goals() -> None:
     _save("goals", {"goals": agent.goals, "subtasks": agent.subtasks})
@@ -328,6 +331,7 @@ def _persist_devices() -> None:
     _save("devices", {k: v.model_dump() for k, v in world.devices.items()})
 
 scheduler.add(CronJob(name="goal_tick", interval_seconds=60, task=agent.tick))
+
 @app.on_event("startup")
 async def startup() -> None:
     agent.goals = _load("goals").get("goals", {})
@@ -373,11 +377,11 @@ async def chat_http(payload: ChatIn) -> dict:
             agent.subtasks[sub.id] = sub.model_dump()
         agent.state.last_goal_id = goal.id
         _persist_goals()
-    agent.ingest_user_message(user_message)
+        agent.ingest_user_message(user_message)
     agent_tick = agent.tick()
     _persist_goals()
     sync_state.enqueue(SyncOp(op_id=uuid.uuid4().hex, op_type="chat", entity="conversation", key=datetime.utcnow().isoformat(), value={"message": user_message, "reply": agent_reply}, source_device=payload.device_id or "unknown"))
-return {"reply": agent_reply, "agent_tick": agent_tick, "world_snapshot": world.snapshot()}
+    return {"reply": agent_reply, "agent_tick": agent_tick, "world_snapshot": world.snapshot()}
 
 @app.get("/goals")
 def list_goals() -> dict:
@@ -413,9 +417,9 @@ async def chat_ws(ws: WebSocket) -> None:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("agent_server:app", host="0.0.0.0", port=8000, reload=False)
-PYEOF
+EOF
 
-cat > "${APP_DIR}/clients/web/index.html" <<'HTMLEOF'
+cat > "${APP_DIR}/clients/web/index.html" <<'EOF'
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -423,13 +427,13 @@ cat > "${APP_DIR}/clients/web/index.html" <<'HTMLEOF'
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nexus</title>
 <style>
-  body { font-family: system-ui, sans-serif; background:#0f1115; color:#e6e8eb; margin:0; }
+body { font-family: system-ui, sans-serif; background:#0f1115; color:#e6e8eb; margin:0; }
   #wrap { max-width: 860px; margin: 0 auto; padding: 24px; }
   #log { border: 1px solid #23272f; border-radius: 12px; padding: 16px; min-height: 260px; }
   .row { margin: 10px 0; padding: 8px 10px; border-radius: 10px; }
   .user { background:#1b2330; }
   .agent { background:#18211a; }
-.meta { font-size: 12px; opacity: 0.7; margin-top: 4px; }
+  .meta { font-size: 12px; opacity: 0.7; margin-top: 4px; }
   #tray { display:flex; gap:8px; margin-top:12px; }
   input[type=text] { flex:1; padding:12px; border-radius:10px; border:1px solid #2a2f38; background:#0f1115; color:#e6e8eb; }
   button { padding:12px 14px; border-radius:10px; border:0; background:#3b82f6; color:white; cursor:pointer; }
@@ -460,7 +464,6 @@ const log = document.getElementById("log");
 const devices = document.getElementById("devices");
 const goals = document.getElementById("goals");
 const sync = document.getElementById("sync");
-
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function add(role, text, meta){
@@ -472,7 +475,7 @@ function add(role, text, meta){
 }
 
 async function post(path, body){
-const r = await fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(API + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if(!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -508,7 +511,7 @@ async function send(){
     if(data.agent_tick) add("agent", "Tick: " + data.agent_tick);
     await refresh();
   } catch(e){
-    add("agent", "Fehler: " + e.message);
+  add("agent", "Fehler: " + e.message);
   }
 }
 
@@ -518,77 +521,39 @@ document.getElementById("msg").addEventListener("keydown", e => { if(e.key==="En
 (async ()=>{
   await post("/device", { device_id: DEVICE, name: "Web-Client", type: "web", capabilities: ["browser"] });
   add("agent", "Willkommen bei Nexus. Ich bin dein proaktiver Agent.", new Date().toLocaleTimeString());
-await refresh();
+  await refresh();
   setInterval(refresh, 5000);
 })();
 </script>
 </body>
 </html>
-HTMLEOF
-
-cat > "${APP_DIR}/requirements.txt" <<'EOF'
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
-pydantic==2.9.0
-httpx==0.28.1
-websockets==13.1
 EOF
 
-cat > "${APP_DIR}/Dockerfile" <<'EOF'
-FROM python:3.12-slim
+python3 -m venv "${APP_DIR}/.venv"
+"${APP_DIR}/.venv/bin/pip" install --quiet --upgrade pip
+"${APP_DIR}/.venv/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
 
-WORKDIR /opt/nexus
+cat > /etc/systemd/system/nexus.service <<EOF
+[Unit]
+Description=Nexus Goal Agent
+After=network.target
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+[Service]
+Type=simple
+WorkingDirectory=${APP_DIR}
+Environment="PATH=${APP_DIR}/.venv/bin"
+Environment="LLM_MODEL=gpt-4o-mini"
+ExecStart=${APP_DIR}/.venv/bin/uvicorn agent_server:app --host 0.0.0.0 --port ${PORT}
+Restart=always
+RestartSec=5
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "agent_server:app", "--host", "0.0.0.0", "--port", "8000"]
+[Install]
+WantedBy=multi-user.target
 EOF
 
-cat > "${APP_DIR}/docker-compose.yml" <<'EOF'
-version: '3.8'
-
-services:
-  nexus:
-    build: .
-    container_name: nexus
-    restart: always
-    environment:
-      - LLM_MODEL=gpt-4o-mini
-      - LLM_API_KEY=***
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
-    volumes:
-      - ./data:/opt/nexus/data
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.nexus.rule=Host(\`nexus.local\`)"
-      - "traefik.http.routers.nexus.entrypoints=web"
-      - "traefik.http.services.nexus.loadbalancer.server.port=8000"
-    networks:
-      - proxy
-
-networks:
-  proxy:
-    external: true
-EOF
-
-# Docker bauen und starten
-echo "🔨 Baue Docker Image..."
-cd "${APP_DIR}"
-docker compose build
-
-echo "🚀 Starte Nexus Container..."
-docker compose up -d
+systemctl daemon-reload
+systemctl enable --now nexus
 
 echo
-echo "✅ Nexus deployed!"
-echo "🌐 http://$(hostname -I | awk '{print $1}'):8000/"
-echo "💡 Health-Check: http://localhost:8000/health"
+echo "✅ Nexus deployed"
+echo "Web-Client: http://$(hostname -I | awk '{print $1}'):${PORT}/"
